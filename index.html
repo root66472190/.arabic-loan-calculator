@@ -63,67 +63,321 @@ footer{text-align:center;color:var(--muted);font-size:11px;padding:12px}
 <footer>حاسبة القروض العربية • لا ترسل بياناتك إلى أي خادم؛ الحسابات تتم داخل جهازك.</footer>
 </main>
 <script>
-const $=id=>document.getElementById(id);
-const fmt=n=>Number(n).toLocaleString('ar-EG',{minimumFractionDigits:2,maximumFractionDigits:2});
-const isoDate=d=>{let x=new Date(d);return `${x.getFullYear()}-${String(x.getMonth()+1).padStart(2,'0')}-${String(x.getDate()).padStart(2,'0')}`};
-const parseDate=s=>{if(!s)return null;let [y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d,12)};
-function addMonths(date,months){let d=new Date(date),day=d.getDate();d.setDate(1);d.setMonth(d.getMonth()+months);let last=new Date(d.getFullYear(),d.getMonth()+1,0).getDate();d.setDate(Math.min(day,last));return d}
-function dayFraction(a,b,method){if(method==='30/360'){let d1=Math.min(a.getDate(),30),d2=Math.min(b.getDate(),30);return ((b.getFullYear()-a.getFullYear())*360+(b.getMonth()-a.getMonth())*30+(d2-d1))/360}return (b-a)/86400000/360}
-function radio(name){return document.querySelector(`input[name="${name}"]:checked`).value}
-let schedule=[];
-function calc(){
- const P=+$('amount').value, annual=+$('rate').value/100, years=+$('years').value;
- const start=parseDate($('start').value), first=parseDate($('first').value), dc=$('dayCount').value, freq=radio('frequency'), type=radio('interestType'), growth=radio('growth'), growthRate=+$('growthRate').value/100;
- if(!(P>0)||annual<0||!Number.isFinite(years)||years<=0||!start||!first||first<start||growthRate<0){alert('راجع البيانات: المبلغ والمدة يجب أن يكونا موجبين، وتاريخ أول قسط لا يسبق تاريخ بدء القرض.');return}
- const months=Math.max(1,Math.round(years*12)), step=freq==='monthly'?1:3, n=Math.max(1,Math.ceil(months/step));
- let balance=P, prev=start, interestTotal=0, paidTotal=0, rows=[];
- const rMonthly=annual/12;
- // Estimate initial target installment using standard annuity for reducing loans.
- const basePayment=annual===0?P/n:(rMonthly===0?P/n:P*rMonthly/(1-Math.pow(1+rMonthly,-n)));
- let target=type==='flat'?(P+P*annual*years)/n:basePayment;
- for(let i=1;i<=n && balance>0.005;i++){
-   let date=addMonths(first,(i-1)*step);
-   // For the first period, interest accrues from loan start; later from previous installment date.
-   let fraction=dayFraction(prev,date,dc);
-   if(fraction<0) fraction=0;
-   let interest=type==='flat'?(P*annual*years/n):balance*annual*fraction;
-   let ageMonths=Math.max(0,Math.floor((date-first)/(86400000*30.4375)));
-   let yearIndex=Math.floor((i-1)*step/12);
-   let scheduled=target*(growth==='step'?Math.pow(1+growthRate,yearIndex):1);
-   // For flat interest, scheduled payment is principal amortization plus period interest.
-   let payment=type==='flat'?(P/n+interest):scheduled;
-   if(type==='flat' && growth==='step') payment=(P/n*Math.pow(1+growthRate,yearIndex))+interest;
-   let principal=payment-interest;
-   if(type==='reducing' && principal<=0){alert('القسط لا يغطي الفائدة. قلل نسبة الفائدة أو زد قيمة القسط.');return}
-   if(principal>=balance){principal=balance;payment=principal+interest}
-   if(type==='flat'){principal=Math.min(balance,P/n);payment=principal+interest}
-   balance=Math.max(0,balance-principal);
-   interestTotal+=interest;paidTotal+=payment;
-   rows.push({i,date:isoDate(date),payment,principal,interest,balance});
-   prev=date;
-   if(i===1 && growth==='step') target=scheduled;
- }
- schedule=rows;
- $('firstPayment').textContent=rows.length?fmt(rows[0].payment)+' ج.م':'—';
- $('count').textContent=String(rows.length);
- $('totalInterest').textContent=fmt(interestTotal)+' ج.م';
- $('totalPaid').textContent=fmt(paidTotal)+' ج.م';
- $('lastDate').textContent=rows.length?rows[rows.length-1].date:'—';
- $('balance').textContent=fmt(balance)+' ج.م';
- $('status').textContent=`تم إنشاء ${rows.length} قسطًا. طريقة الفائدة: ${type==='flat'?'ثابتة':'متناقصة'}؛ دورية السداد: ${freq==='monthly'?'شهرية':'ربع سنوية'}.`;
- renderTable();
+const $ = id => document.getElementById(id);
+
+const fmt = n => Number(n).toLocaleString('ar-EG', {
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2
+});
+
+const isoDate = d =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+const parseDate = s => {
+  if (!s) return null;
+  const [y, m, d] = s.split('-').map(Number);
+  return new Date(y, m - 1, d, 12);
+};
+
+function addMonths(date, months) {
+  const d = new Date(date);
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + months);
+  const last = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, last));
+  return d;
 }
-function renderTable(){if(!schedule.length){$('table').textContent='سيظهر جدول السداد هنا بعد الحساب.';return}
- let html='<div class="tablewrap"><table><thead><tr><th>رقم</th><th>تاريخ القسط</th><th>قيمة القسط</th><th>أصل القرض</th><th>الفائدة</th><th>الرصيد المتبقي</th></tr></thead><tbody>';
- for(const r of schedule)html+=`<tr><td>${r.i}</td><td>${r.date}</td><td>${fmt(r.payment)}</td><td>${fmt(r.principal)}</td><td>${fmt(r.interest)}</td><td>${fmt(r.balance)}</td></tr>`;
- $('table').innerHTML=html+'</tbody></table></div>'}
-$('calculate').addEventListener('click',calc);
-document.querySelectorAll('input[name="growth"]').forEach(x=>x.addEventListener('change',()=>{$('growthField').hidden=radio('growth')!=='step'}));
-$('reset').addEventListener('click',()=>{if(confirm('إعادة ضبط البيانات؟'))location.reload()});
-$('print').addEventListener('click',()=>{if(!schedule.length){alert('احسب جدول السداد أولًا');return}window.print()});
-$('csv').addEventListener('click',()=>{if(!schedule.length){alert('احسب جدول السداد أولًا');return}let rows=[['رقم القسط','تاريخ القسط','قيمة القسط','أصل القرض','الفائدة','الرصيد المتبقي'],...schedule.map(r=>[r.i,r.date,r.payment.toFixed(2),r.principal.toFixed(2),r.interest.toFixed(2),r.balance.toFixed(2)])];let csv='\ufeff'+rows.map(r=>r.join(',')).join('\r\n');let a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'}));a.download='جدول-سداد-القرض.csv';a.click();URL.revokeObjectURL(a.href)});
-const today=new Date();$('start').value=isoDate(today);$('first').value=isoDate(addMonths(today,1));
-if('serviceWorker' in navigator && location.protocol.startsWith('http'))window.addEventListener('load',()=>navigator.serviceWorker.register('./sw.js').catch(()=>{}));
+
+function dayFraction(a, b, method) {
+  if (method === '30/360') {
+    const d1 = Math.min(a.getDate(), 30);
+    const d2 = Math.min(b.getDate(), 30);
+
+    const days =
+      (b.getFullYear() - a.getFullYear()) * 360 +
+      (b.getMonth() - a.getMonth()) * 30 +
+      (d2 - d1);
+
+    return Math.max(0, days / 360);
+  }
+
+  return Math.max(0, (b - a) / 86400000 / 360);
+}
+
+function radio(name) {
+  return document.querySelector(`input[name="${name}"]:checked`).value;
+}
+
+let schedule = [];
+
+function calc() {
+  const P = Number($('amount').value);
+  const annual = Number($('rate').value) / 100;
+  const years = Number($('years').value);
+  const start = parseDate($('start').value);
+  const first = parseDate($('first').value);
+  const dc = $('dayCount').value;
+  const freq = radio('frequency');
+  const type = radio('interestType');
+  const growth = radio('growth');
+  const growthRate = Number($('growthRate').value) / 100;
+
+  if (
+    !(P > 0) ||
+    !Number.isFinite(annual) ||
+    annual < 0 ||
+    annual > 10 ||
+    !Number.isFinite(years) ||
+    years <= 0 ||
+    !start ||
+    !first ||
+    first < start ||
+    !Number.isFinite(growthRate) ||
+    growthRate < 0
+  ) {
+    alert('راجع البيانات: تأكد من مبلغ القرض والفائدة والمدة وتواريخ السداد.');
+    return;
+  }
+
+  const months = Math.max(1, Math.round(years * 12));
+  const step = freq === 'monthly' ? 1 : 3;
+  const n = Math.max(1, Math.ceil(months / step));
+
+  // إنشاء مواعيد الأقساط وحساب فترة الفائدة لكل قسط.
+  const periods = [];
+  let previousDate = start;
+
+  for (let i = 1; i <= n; i++) {
+    const date = addMonths(first, (i - 1) * step);
+    const fraction = dayFraction(previousDate, date, dc);
+    const yearIndex = Math.floor(((i - 1) * step) / 12);
+    const factor = growth === 'step'
+      ? Math.pow(1 + growthRate, yearIndex)
+      : 1;
+
+    periods.push({
+      i,
+      date,
+      fraction,
+      factor
+    });
+
+    previousDate = date;
+  }
+
+  let rows = [];
+  let balance = P;
+  let interestTotal = 0;
+  let paidTotal = 0;
+
+  if (type === 'reducing') {
+    /*
+      حساب القسط المستهدف بطريقة القيمة الحالية:
+      كل فترة لها معامل فائدة خاص بها، بما فيها الفترة الأولى.
+      بذلك يتحدد القسط المناسب لإقفال الرصيد في آخر قسط.
+    */
+    let discountProduct = 1;
+    let paymentWeightSum = 0;
+
+    for (const period of periods) {
+      const periodRate = annual * period.fraction;
+      discountProduct *= (1 + periodRate);
+      paymentWeightSum += period.factor / discountProduct;
+    }
+
+    if (!(paymentWeightSum > 0) || !Number.isFinite(paymentWeightSum)) {
+      alert('تعذر حساب القسط. راجع بيانات القرض.');
+      return;
+    }
+
+    const basePayment = P / paymentWeightSum;
+
+    for (let index = 0; index < periods.length; index++) {
+      const period = periods[index];
+      const interest = balance * annual * period.fraction;
+      let payment = basePayment * period.factor;
+
+      if (payment <= interest && balance > 0.005) {
+        alert('القسط لا يغطي الفائدة المستحقة. قلل الفائدة أو عدّل المدة أو نظام الأقساط.');
+        return;
+      }
+
+      let principal = payment - interest;
+
+      // ضبط القسط الأخير لتصفير الرصيد، مع احتساب فائدته.
+      if (index === periods.length - 1 || principal >= balance) {
+        principal = balance;
+        payment = principal + interest;
+      }
+
+      balance = Math.max(0, balance - principal);
+      if (balance < 0.005) balance = 0;
+
+      interestTotal += interest;
+      paidTotal += payment;
+
+      rows.push({
+        i: period.i,
+        date: isoDate(period.date),
+        payment,
+        principal,
+        interest,
+        balance
+      });
+    }
+  } else {
+    /*
+      الفائدة الثابتة:
+      تُحسب على أصل القرض الأصلي لكل فترة وفق عدد أيامها.
+      ويُوزع أصل القرض على الأقساط، مع مراعاة الزيادة السنوية
+      إن اختير نظام الأقساط المتصاعدة.
+    */
+    const totalFactor = periods.reduce((sum, period) => sum + period.factor, 0);
+
+    if (!(totalFactor > 0)) {
+      alert('تعذر حساب توزيع أصل القرض.');
+      return;
+    }
+
+    for (let index = 0; index < periods.length; index++) {
+      const period = periods[index];
+      const interest = P * annual * period.fraction;
+
+      let principal = P * period.factor / totalFactor;
+
+      // آخر قسط يسدد كامل أصل القرض المتبقي.
+      if (index === periods.length - 1 || principal >= balance) {
+        principal = balance;
+      }
+
+      const payment = principal + interest;
+      balance = Math.max(0, balance - principal);
+      if (balance < 0.005) balance = 0;
+
+      interestTotal += interest;
+      paidTotal += payment;
+
+      rows.push({
+        i: period.i,
+        date: isoDate(period.date),
+        payment,
+        principal,
+        interest,
+        balance
+      });
+    }
+  }
+
+  schedule = rows;
+
+  $('firstPayment').textContent = rows.length
+    ? fmt(rows[0].payment) + ' ج.م'
+    : '—';
+
+  $('count').textContent = String(rows.length);
+  $('totalInterest').textContent = fmt(interestTotal) + ' ج.م';
+  $('totalPaid').textContent = fmt(paidTotal) + ' ج.م';
+  $('lastDate').textContent = rows.length
+    ? rows[rows.length - 1].date
+    : '—';
+  $('balance').textContent = fmt(balance) + ' ج.م';
+
+  $('status').textContent =
+    `تم إنشاء ${rows.length} قسطًا. ` +
+    `طريقة الفائدة: ${type === 'flat' ? 'ثابتة' : 'متناقصة'}؛ ` +
+    `دورية السداد: ${freq === 'monthly' ? 'شهرية' : 'ربع سنوية'}. ` +
+    'تم احتساب فائدة كل فترة وفق طريقة الأيام المحددة.';
+
+  renderTable();
+}
+
+function renderTable() {
+  if (!schedule.length) {
+    $('table').textContent = 'سيظهر جدول السداد هنا بعد الحساب.';
+    return;
+  }
+
+  let html =
+    '<div class="tablewrap"><table><thead><tr>' +
+    '<th>رقم</th><th>تاريخ القسط</th><th>قيمة القسط</th>' +
+    '<th>أصل القرض</th><th>الفائدة</th><th>الرصيد المتبقي</th>' +
+    '</tr></thead><tbody>';
+
+  for (const r of schedule) {
+    html += `<tr>
+      <td>${r.i}</td>
+      <td>${r.date}</td>
+      <td>${fmt(r.payment)}</td>
+      <td>${fmt(r.principal)}</td>
+      <td>${fmt(r.interest)}</td>
+      <td>${fmt(r.balance)}</td>
+    </tr>`;
+  }
+
+  $('table').innerHTML = html + '</tbody></table></div>';
+}
+
+$('calculate').addEventListener('click', calc);
+
+document.querySelectorAll('input[name="growth"]').forEach(input => {
+  input.addEventListener('change', () => {
+    $('growthField').hidden = radio('growth') !== 'step';
+  });
+});
+
+$('reset').addEventListener('click', () => {
+  if (confirm('إعادة ضبط البيانات؟')) location.reload();
+});
+
+$('print').addEventListener('click', () => {
+  if (!schedule.length) {
+    alert('احسب جدول السداد أولًا');
+    return;
+  }
+  window.print();
+});
+
+$('csv').addEventListener('click', () => {
+  if (!schedule.length) {
+    alert('احسب جدول السداد أولًا');
+    return;
+  }
+
+  const rows = [
+    ['رقم القسط', 'تاريخ القسط', 'قيمة القسط', 'أصل القرض', 'الفائدة', 'الرصيد المتبقي'],
+    ...schedule.map(r => [
+      r.i,
+      r.date,
+      r.payment.toFixed(2),
+      r.principal.toFixed(2),
+      r.interest.toFixed(2),
+      r.balance.toFixed(2)
+    ])
+  ];
+
+  const csv = '\ufeff' + rows.map(r => r.join(',')).join('\r\n');
+  const a = document.createElement('a');
+  const url = URL.createObjectURL(
+    new Blob([csv], { type: 'text/csv;charset=utf-8' })
+  );
+
+  a.href = url;
+  a.download = 'جدول-سداد-القرض.csv';
+  a.click();
+
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+const today = new Date();
+$('start').value = isoDate(today);
+$('first').value = isoDate(addMonths(today, 1));
+
+if ('serviceWorker' in navigator && location.protocol.startsWith('http')) {
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('./sw.js').catch(() => {});
+  });
+}
 </script>
 <style>@media print{header{background:#fff;color:#000;border-bottom:2px solid #333}header p{color:#333}body{background:#fff}.layout{display:block}.layout>section:first-child,.actions,footer{display:none}.card{box-shadow:none;break-inside:avoid}.tablewrap{max-height:none;overflow:visible}th{position:static}main{max-width:none}}</style>
 </body></html>
